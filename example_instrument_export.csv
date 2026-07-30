@@ -1,0 +1,17 @@
+* Experiment: My qPCR run
+* Date: 2026-07-01
+* Instrument: QuantStudio 5
+
+Well Position,Sample Name,Target Name,CT
+A1,Ctrl_1,GAPDH,18.1
+A2,Ctrl_1,GAPDH,18.3
+A3,Ctrl_1,IL6,24.0
+A4,Ctrl_1,IL6,24.3
+B1,Ctrl_2,GAPDH,18.0
+B2,Ctrl_2,GAPDH,18.2
+B3,Ctrl_2,IL6,Undetermined
+B4,Ctrl_2,IL6,24.5
+C1,Treat_1,GAPDH,18.2
+C2,Treat_1,GAPDH,18.1
+C3,Treat_1,IL6,20.0
+C4,Treat_1,IL6,22.5
