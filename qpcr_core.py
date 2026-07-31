@@ -30,6 +30,40 @@ from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from scipy.stats import dunnett
 
+def compute_dct(df, reference_gene, target_genes=None,
+                 sample_col="Sample", group_col="Group", gene_col="Gene", ct_col="Ct"):
+    """
+    Compute delta-Ct only (Ct_target - Ct_reference), with no control-group
+    normalization or fold-change step. Useful when the user hasn't defined
+    experimental groups yet and just wants QC'd, normalized Ct values.
+
+    Returns a DataFrame with: Sample, [Group if present], Gene, Ct, Ct_ref, dCt
+    """
+    df = df.copy()
+    if target_genes is None:
+        target_genes = [g for g in df[gene_col].unique() if g != reference_gene]
+
+    ref = df[df[gene_col] == reference_gene][[sample_col, ct_col]].rename(
+        columns={ct_col: "Ct_ref"})
+    if ref[sample_col].duplicated().any():
+        raise ValueError(
+            f"Multiple '{reference_gene}' Ct values found for the same sample. "
+            "Average technical replicates before running this tool."
+        )
+
+    results = []
+    for gene in target_genes:
+        sub = df[df[gene_col] == gene].merge(ref, on=sample_col, how="left")
+        if sub["Ct_ref"].isna().any():
+            missing = sub[sub["Ct_ref"].isna()][sample_col].tolist()
+            raise ValueError(f"No reference-gene Ct found for sample(s): {missing}")
+        sub["dCt"] = sub[ct_col] - sub["Ct_ref"]
+        results.append(sub)
+
+    out = pd.concat(results, ignore_index=True)
+    keep = [c for c in [sample_col, group_col, gene_col, ct_col, "Ct_ref", "dCt"] if c in out.columns]
+    return out[keep]
+
 def compute_ddct(df, reference_gene, control_group, target_genes=None,
                   sample_col="Sample", group_col="Group", gene_col="Gene", ct_col="Ct"):
     """

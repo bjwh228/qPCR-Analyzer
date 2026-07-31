@@ -16,7 +16,7 @@ import hashlib
 
 from qpcr_import import load_qpcr_file
 from qpcr_qc import handle_missing_values, collapse_replicates
-from qpcr_core import compute_ddct, run_stats
+from qpcr_core import compute_ddct, compute_dct, run_stats
 from qpcr_plot import plot_gene_with_points, DEFAULT_STYLE
 
 st.set_page_config(page_title="qPCR Analyzer", layout="wide")
@@ -73,83 +73,108 @@ if st.session_state.get("data_source_signature") != data_source_signature:
         st.session_state.pop(key, None)
     st.session_state.data_source_signature = data_source_signature
 
-# ================================================================ 2. Assign groups (if needed)
-if "sample_groups" not in st.session_state:
-    unique_samples = raw_df[["Sample"]].drop_duplicates().reset_index(drop=True)
-    unique_samples["Select"] = False
-    if "Group" in raw_df.columns:
-        existing = raw_df[["Sample", "Group"]].drop_duplicates(subset="Sample")
-        unique_samples = unique_samples.merge(existing, on="Sample", how="left")
-        unique_samples["Group"] = unique_samples["Group"].fillna("")
-    else:
-        unique_samples["Group"] = ""
-    st.session_state.sample_groups = unique_samples
-
-if "show_group_editor" not in st.session_state:
-    st.session_state.show_group_editor = (
-        st.session_state.sample_groups["Group"].astype(str).str.strip() == ""
-    ).any()
-
-if st.session_state.show_group_editor:
-    st.header("1. Review imported data & assign groups")
-
-    if "warning_dismissed" not in st.session_state:
-        st.session_state.warning_dismissed = False
-
-    if not st.session_state.warning_dismissed:
-        warn_col1, warn_col2 = st.columns([20, 1])
-        with warn_col1:
-            st.warning("Select samples below and assign a group to all of them at once.")
-        with warn_col2:
-            st.write("")
-            if st.button("✕", key="dismiss_warning"):
-                st.session_state.warning_dismissed = True
-                st.rerun()
-
-    with st.form("group_assignment_form"):
-        select_all = st.checkbox("Select all samples")
-        display_df = st.session_state.sample_groups.copy()
-        if select_all:
-            display_df["Select"] = True
-
-        edited_samples = st.data_editor(
-            display_df,
-            column_config={
-                "Select": st.column_config.CheckboxColumn("Select", width="small"),
-                "Sample": st.column_config.TextColumn("Sample", disabled=True, width="medium"),
-                "Group": st.column_config.TextColumn("Group", width="medium"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="group_editor",
-        )
-
-        bulk_value = st.text_input("Group name to apply to selected samples")
-        apply_clicked = st.form_submit_button("Apply to selected")
-
-    st.session_state.sample_groups = edited_samples
-
-    if apply_clicked and bulk_value.strip():
-        mask = st.session_state.sample_groups["Select"]
-        st.session_state.sample_groups.loc[mask, "Group"] = bulk_value.strip()
-        st.session_state.sample_groups["Select"] = False
-        st.rerun()
-
-edited_df = raw_df.drop(columns=["Group"], errors="ignore").merge(
-    st.session_state.sample_groups[["Sample", "Group"]], on="Sample", how="left"
+st.sidebar.markdown("---")
+analysis_mode = st.sidebar.radio(
+    "Analysis type",
+    ["Full ddCt analysis (needs groups + control)", "Just QC + dCt (no groups needed)"],
+)
+skip_groups = analysis_mode.startswith("Just QC")
+has_groups_already = (
+    "Group" in raw_df.columns
+    and not raw_df["Group"].isna().all()
+    and (raw_df["Group"].astype(str).str.strip() != "").any()
 )
 
-if (edited_df["Group"].astype(str).str.strip() == "").any():
-    st.error("Some samples still have no Group assigned. Fill in the Group column above to continue.")
-    st.stop()
+if skip_groups and has_groups_already:
+    st.info(
+        "This file already has group labels in it. If you want fold-change, statistics, "
+        "and figures, switch to **Full ddCt analysis** in the sidebar."
+    )
+elif not skip_groups and not has_groups_already:
+    st.info(
+        "No group labels were found in this file. If you just want QC'd dCt values without "
+        "assigning groups, you can switch to **Just QC + dCt** in the sidebar instead."
+    )
+# ================================================================ 2. Assign groups (if needed)
+if skip_groups:
+    edited_df = raw_df
+else:
+    if "sample_groups" not in st.session_state:
+        unique_samples = raw_df[["Sample"]].drop_duplicates().reset_index(drop=True)
+        unique_samples["Select"] = False
+        if "Group" in raw_df.columns:
+            existing = raw_df[["Sample", "Group"]].drop_duplicates(subset="Sample")
+            unique_samples = unique_samples.merge(existing, on="Sample", how="left")
+            unique_samples["Group"] = unique_samples["Group"].fillna("")
+        else:
+            unique_samples["Group"] = ""
+        st.session_state.sample_groups = unique_samples
 
-if not st.session_state.show_group_editor:
-    st.header("1. Sample groups")
-    st.success("All samples have a group assigned.")
-    if st.button("Edit groups"):
-        st.session_state.show_group_editor = True
-        st.rerun()
-    st.dataframe(edited_df, use_container_width=True)
+    if "show_group_editor" not in st.session_state:
+        st.session_state.show_group_editor = (
+            st.session_state.sample_groups["Group"].astype(str).str.strip() == ""
+        ).any()
+
+    if st.session_state.show_group_editor:
+        st.header("1. Review imported data & assign groups")
+
+        if "warning_dismissed" not in st.session_state:
+            st.session_state.warning_dismissed = False
+
+        if not st.session_state.warning_dismissed:
+            warn_col1, warn_col2 = st.columns([20, 1])
+            with warn_col1:
+                st.warning("Select samples below and assign a group to all of them at once.")
+            with warn_col2:
+                st.write("")
+                if st.button("✕", key="dismiss_warning"):
+                    st.session_state.warning_dismissed = True
+                    st.rerun()
+
+        with st.form("group_assignment_form"):
+            select_all = st.checkbox("Select all samples")
+            display_df = st.session_state.sample_groups.copy()
+            if select_all:
+                display_df["Select"] = True
+
+            edited_samples = st.data_editor(
+                display_df,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn("Select", width="small"),
+                    "Sample": st.column_config.TextColumn("Sample", disabled=True, width="medium"),
+                    "Group": st.column_config.TextColumn("Group", width="medium"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="group_editor",
+            )
+
+            bulk_value = st.text_input("Group name to apply to selected samples")
+            apply_clicked = st.form_submit_button("Apply to selected")
+
+        st.session_state.sample_groups = edited_samples
+
+        if apply_clicked and bulk_value.strip():
+            mask = st.session_state.sample_groups["Select"]
+            st.session_state.sample_groups.loc[mask, "Group"] = bulk_value.strip()
+            st.session_state.sample_groups["Select"] = False
+            st.rerun()
+
+    edited_df = raw_df.drop(columns=["Group"], errors="ignore").merge(
+        st.session_state.sample_groups[["Sample", "Group"]], on="Sample", how="left"
+    )
+
+    if (edited_df["Group"].astype(str).str.strip() == "").any():
+        st.error("Some samples still have no Group assigned. Fill in the Group column above to continue.")
+        st.stop()
+
+    if not st.session_state.show_group_editor:
+        st.header("1. Sample groups")
+        st.success("All samples have a group assigned.")
+        if st.button("Edit groups"):
+            st.session_state.show_group_editor = True
+            st.rerun()
+        st.dataframe(edited_df, use_container_width=True)
 # ================================================================ 3. Missing value handling
 st.sidebar.markdown("---")
 st.sidebar.header("2. Missing / undetermined values")
@@ -221,11 +246,45 @@ if collapsed_df.empty:
     st.stop()
 
 genes = sorted(collapsed_df["Gene"].unique().tolist())
-groups_list = sorted(collapsed_df["Group"].dropna().unique().tolist())
 
 st.sidebar.markdown("---")
 st.sidebar.header("4. Analysis settings")
 reference_gene = st.sidebar.selectbox("Reference / housekeeping gene", genes)
+
+if skip_groups:
+    # ---- QC + dCt only, no groups/stats/figures ----
+    target_genes = [g for g in genes if g != reference_gene]
+    dct_df = compute_dct(collapsed_df, reference_gene=reference_gene, target_genes=target_genes)
+
+    tab_qc, tab_data = st.tabs(["🔍 QC Report", "📄 dCt data"])
+
+    with tab_qc:
+        st.subheader("Missing value handling log")
+        if len(missing_log):
+            st.dataframe(missing_log)
+        else:
+            st.caption("No missing/undetermined values found.")
+        st.subheader("Technical replicate QC")
+        if len(qc_report):
+            flagged_only = qc_report[qc_report["flagged"]]
+            if len(flagged_only):
+                st.dataframe(flagged_only)
+            else:
+                st.success("No replicate sets exceeded the cutoff.")
+            with st.expander("Full replicate QC log"):
+                st.dataframe(qc_report)
+
+    with tab_data:
+        st.subheader("Collapsed data used (post-QC)")
+        st.dataframe(collapsed_df)
+        st.subheader("dCt table")
+        st.dataframe(dct_df)
+        csv_buf = io.StringIO()
+        dct_df.to_csv(csv_buf, index=False)
+        st.download_button("Download dCt table (.csv)", csv_buf.getvalue(), file_name="qpcr_dct.csv")
+
+    st.stop()
+groups_list = sorted(collapsed_df["Group"].dropna().unique().tolist())
 target_genes = st.sidebar.multiselect("Target gene(s) to analyze",
                                        [g for g in genes if g != reference_gene],
                                        default=[g for g in genes if g != reference_gene])
@@ -278,7 +337,7 @@ style = {
 }
 
 # ================================================================ Display
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Figures", "📈 Statistics", "🔍 QC Report", "📄 Raw / ddCt data"])
+tab1, tab2, tab3, tab4 = st.tabs(["Figures", "Statistics", "QC Report", "Raw / ddCt data"])
 
 with tab1:
     for gene in target_genes:
@@ -344,7 +403,7 @@ with tab4:
 
 st.markdown("---")
 st.caption(
-    "Method: ddCt (Livak method). Stats run on dCt values (Welch's t-test for 2 groups, "
+    "Method: ddCt. Stats run on dCt values (Welch's t-test for 2 groups, "
     "one-way ANOVA + Tukey HSD for 3+ groups) since fold-change is log-distributed. "
     "Technical replicates are QC'd and collapsed before analysis; see the QC Report tab for details."
 )
