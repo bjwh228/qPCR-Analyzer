@@ -69,12 +69,8 @@ def _to_ct_float(val):
 
 def _find_quantstudio_header_row(lines, max_scan=60):
     """
-    QuantStudio exports reliably have a data header row starting with 'Well'
+    QuantStudio exports have a data header row starting with 'Well'
     (e.g. 'Well,Sample Name,Target Name,Task,CT,...' or 'Well Position,...').
-    If the file's first line already starts with 'Well', no metadata rows
-    precede it. Otherwise, scan forward for the first line that does and
-    treat that as the header, skipping everything above it (QuantStudio
-    prints several '* Block Type: ...' style metadata lines before the table).
     """
     for i, line in enumerate(lines[:max_scan]):
         if line.strip().lower().startswith("well"):
@@ -101,10 +97,6 @@ def _find_header_row(lines, max_scan=60):
 def _rename_with_aliases(df):
     """
     Map raw column names to standard names (sample/gene/ct/well/group).
-    If more than one raw column maps to the same standard name (e.g. a
-    QuantStudio export with both 'Well' and 'Well Position'), keep only the
-    first match and drop the rest -- otherwise pandas silently creates
-    duplicate-named columns that break downstream selection.
     """
     rename_map = {}
     used_standards = set()
@@ -144,12 +136,9 @@ def _melt_wide_format(df):
 
 def load_qpcr_file(file_obj, filename=None):
     """
-    Main entry point. Accepts a file path (str), a file-like object, or bytes.
+    Accepts a file path (str), a file-like object, or bytes.
     Returns (long_df, format_detected) where long_df has columns:
         Sample, Gene, Ct, [Well], [Group]
-    Note: rows may contain duplicate (Sample, Gene) pairs -- these are
-    technical replicates and should be passed to qpcr_qc.collapse_replicates()
-    before running ddCt/statistics.
     """
     # ---- read raw bytes/text ----
     is_excel = False
@@ -177,11 +166,9 @@ def load_qpcr_file(file_obj, filename=None):
     if is_excel:
         df = pd.read_excel(file_obj, header=header_idx)
     else:
-        # detect delimiter from the header line itself
+        # detect delimiter from the header line
         delim = "\t" if lines[header_idx].count("\t") > lines[header_idx].count(",") else ","
-        # skip_blank_lines=False keeps row indices aligned with _find_header_row,
-        # which scanned raw (unfiltered) lines -- otherwise blank metadata lines
-        # shift the header row index pandas actually uses.
+
         df = pd.read_csv(io.StringIO(text), header=header_idx, sep=delim,
                           engine="python", skip_blank_lines=False)
         df = df.dropna(how="all")
@@ -216,17 +203,17 @@ def load_qpcr_file(file_obj, filename=None):
 
 
 if __name__ == "__main__":
-    # smoke test: generic long CSV
+    #generic long CSV
     csv_text = "Sample,Group,Gene,Ct\nS1,Control,GAPDH,18.2\nS1,Control,IL6,24.1\n"
     df, fmt = load_qpcr_file(io.StringIO(csv_text).read().encode(), filename="test.csv")
     print("Long format test:\n", df, "\nDetected:", fmt)
 
-    # smoke test: wide format with replicate suffixes
+    #wide format with replicate suffixes
     csv_text2 = "Sample,Group,GAPDH_1,GAPDH_2,IL6_1,IL6_2\nS1,Control,18.1,18.3,24.0,24.2\n"
     df2, fmt2 = load_qpcr_file(io.StringIO(csv_text2).read().encode(), filename="test2.csv")
     print("\nWide format test:\n", df2, "\nDetected:", fmt2)
 
-    # smoke test: mock QuantStudio-style export with metadata header rows + Undetermined
+    #mock QuantStudio-style export with metadata header rows + Undetermined
     csv_text3 = (
         "* Block Type: 96\n* Instrument: QuantStudio\n\n"
         "Well Position,Sample Name,Target Name,CT\n"
